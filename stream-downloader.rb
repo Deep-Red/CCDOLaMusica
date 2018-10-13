@@ -1,44 +1,57 @@
 require 'open-uri'
 require 'json'
-require 'fileutils'
+require 'io/console'
 
-# Page size as a separate constant so that if more stations are added it will be obvious that this is a limiting factor on the results
-NUMBER_OF_STATIONS = 3
-# API endpoint as a constant in case a developer needs to change it later
-API_ENDPOINT = 'http://api.lamusica.com/audio/content/stations?page_size='
-
-@url = API_ENDPOINT + NUMBER_OF_STATIONS.to_s
-
-@response = JSON.load(open(@url))
+# Set up initial values
+def set_api_endpoint
+  # Page size isolated to set by an optional argument if needed
+  number_of_stations = 13
+  api_endpoint_base = 'http://api.lamusica.com/audio/content/stations?page_size='
+  return api_endpoint_base + number_of_stations.to_s
+end
 
 # Collect callsign and streamURL of each station
-@streamURLs = {}
-@response["data"].each do |station|
-  @streamURLs[station["callSign"]] = station["streamURL"]
+def set_stations(url)
+  response = JSON.load(open(url))
+  streamURLs = {}
+  response["data"].each do |station|
+    streamURLs[station["callSign"]] = station["streamURL"]
+  end
+  return streamURLs
 end
 
 # Pick a streaming server for each station
-@streams = {}
-@streamURLs.each do |cs, url|
-  station_streams = open(url).read.split
-  stream = station_streams[rand(station_streams.length)]
-  @streams[cs] = stream
+def set_servers(stations)
+  streams = {}
+  stations.each do |cs, url|
+    station_streams = open(url).read.split
+    # Pick a random stream from those available
+    stream = station_streams[rand(station_streams.length)]
+    streams[cs] = stream
+  end
+  return streams
 end
 
 # Download the streams in separate processes
-@pids = []
-@streams.each do |cs, stream|
-  @pids << Process.detach(fork {
-    exec "wget", "--quiet", stream, "-O", "#{cs}.mp3"
-  }).pid
+def download(streams)
+  pids = []
+  streams.each do |cs, stream|
+    pids << Process.detach(fork {
+      exec "wget", "--quiet", stream, "-O", "#{cs}.mp3"
+    }).pid
+  end
+  puts "Downloads started."
+  puts "Press any key to end script and halt all downloads."
+  # Wait for user's cue to end the downloads (could be extended for pausing, etc.)
+  STDIN.getch
+
+  pids.each { |pid| Process.kill('KILL', pid) }
 end
 
-# Allows for other commands to be added later:
-comm = ""
-while comm.downcase != "exit"
-  puts "Type 'EXIT' to terminate downloads."
-  comm = gets.chomp
-end
-
-@pids.each { |pid| Process.kill('KILL', pid) }
-puts "Done"
+# Give immediate feedback to let user know the program is executing
+puts "Please wait while your downloads start..."
+# Method calls for main script begin here
+api_endpoint = set_api_endpoint
+stations = set_stations(api_endpoint)
+streams = set_servers(stations)
+download(streams)
